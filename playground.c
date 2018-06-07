@@ -31,26 +31,37 @@ int main(void) {
 //    }
 
 
-    char * str1 = "string1";
-    char * str2 = "string2";
-
+//    char * str1 = "string1";
+//    char * str2 = "string2";
+    
+//    char * str = malloc(sizeof(*str));
+    
     printf("PID: %d Running\n",getpid());
     printf("enter s to send and r to receive : ");
     char ch;
     scanf("%c",&ch);
+    char str[1024];
+    
     if(ch == 's'){
         int receiver_id;
-        printf("enter receiver id : ");
+        printf("enter receiver id: ");
         scanf("%d",&receiver_id);
-        send(str1, receiver_id);
-        while(1);
+        while(1) {
+            printf("enter string to send:");
+            scanf("%s",str);
+            send(str, receiver_id);
+        }
     }
     else if(ch == 'r'){
         int sender_id;
         printf("enter sender id : ");
         scanf("%d",&sender_id);
-        msg* msg1 = recv(sender_id);
-        while(1);
+        while(1) {
+            msg* msg1 = recv(sender_id);
+            if (msg1 != NULL) {
+                printf("read message: { senderId=%d; rcvrId=%d; payload='%s'; }\n", msg1->senderId, msg1->rcvrId, msg1->payload);
+            }
+        }
     }
 
     return 0;

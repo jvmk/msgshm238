@@ -12,6 +12,7 @@
 #include <sys/ipc.h>
 #include  <sys/ipc.h>
 #include  <sys/shm.h>
+#include <errno.h>
 
 /**
  * Max number of chars needed to convert an int to a string.
@@ -219,6 +220,8 @@ int create_shared_mem_segment(int pid1, int pid2) {
     int fd;
     // Construct identifier for new shared mem segment.
     char * identifier = get_shm_id_for_processes(pid1, pid2);
+    // intended size of the shared memory segment
+    size_t shm_segment_size = sizeof(shm_header) + sizeof(msg) * BUFFER_MSG_CAPACITY;
     printf("Creating new shared memory segment with id=%s...\n", identifier);
     // Create and open new shared memory segment.
     fd = shm_open(identifier, O_CREAT | O_EXCL | O_RDWR, S_IRUSR | S_IWUSR);
@@ -230,9 +233,39 @@ int create_shared_mem_segment(int pid1, int pid2) {
      */
     printf("fd value : %d\n",fd);
     if (fd == -1) {
-//        printf("Error creating new shared memory segment.\n");
-        // Return error code letting caller now that segment could not be created.
-        printf("mem exist\n");
+        // Error creating shm segment, check what kind of error occurred using errno set by the call.
+        if (errno != EEXIST) {
+            // Some other (arbitrary) error.
+            return -3;
+        } else {
+            // Pointer to start of shared memory region.
+            void* addr;
+            // Init shm_dict_entry for shm segment that we attached to.
+            shm_dict_entry* entry = malloc(sizeof(shm_dict_entry));
+            // errno == EEXIST i.e. shm segment already exists.
+            printf("mem exist, attaching to it\n");
+            fd = shm_open(identifier, O_RDWR , 0);
+            if (fd == -1) {
+                // Bad luck, failed attaching to existing shm segment.
+                // Report error to caller.
+                return -1;
+            }
+            // TODO need for ftruncate call here? Other process has already sized the shm segment...
+            // Map shm segment into own memory space.
+            addr = mmap(NULL, shm_segment_size , PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+            // fd is no longer needed - we can unlink the shared memory segment using the identifer.
+            close(fd);
+            // Set fields in new entry and update map with new entry.
+            entry->id = identifier;
+            entry->addr = addr;
+            // The second parameter ('id') is the name of the shm_dict_entry field that should be used as key.
+            HASH_ADD_STR(shm_dict, id, entry);
+            // Note: should NOT init shm_header here as the other process has already done so.
+            // Return 0 to indicate success.
+            return 0;
+        }
+        
+        /* previous code
         //int id = shmget(get_shm_id_for_processes(pid1, pid2), sizeof(shm_header) + sizeof(msg) * BUFFER_MSG_CAPACITY, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH | IPC_CREAT);
         fd = shm_open(identifier, O_RDONLY, S_IRUSR | S_IWUSR);
         printf("fd value now : %d\n",fd);
@@ -258,6 +291,7 @@ int create_shared_mem_segment(int pid1, int pid2) {
             // msg * m = fetch_msg(header, senderId);
        }
         return -1;
+        */
     } else {
         // Pointer to starting location of new shared memory segment.
         void *addr;
@@ -274,7 +308,6 @@ int create_shared_mem_segment(int pid1, int pid2) {
          * The size chosen here will be the size of our message queue/buffer.
          * Allow room for the header and a fixed number of messages.
          */
-        size_t shm_segment_size = sizeof(shm_header) + sizeof(msg) * BUFFER_MSG_CAPACITY;
         ftruncate(fd, shm_segment_size);
         // Map shared memory segment into own address space.
         addr = mmap(NULL, shm_segment_size , PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
@@ -383,7 +416,7 @@ msg* fetch_msg(shm_dict_entry* shm_ptr, int senderId) {
 msg* recv(int senderId) {
     // Refresh cached pid if needed.
     get_invoker_pid();
-    printf("recv(int senderId) invoked by caller with pid=%d; senderId=%d\n", invoker_pid, senderId);
+//    printf("recv(int senderId) invoked by caller with pid=%d; senderId=%d\n", invoker_pid, senderId);
     // Locate the shared memory segment if one already exists by querying the hash table.
     //shm_dict_entry *entry = find_shm_dict_entry_for_shm_segment(invoker_pid, senderId);
 
