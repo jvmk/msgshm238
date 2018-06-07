@@ -405,7 +405,7 @@ msg* fetch_msg(shm_dict_entry* shm_ptr, int senderId) {
      * if shm_header->oldest is a message sent by invoker_pid and we therefore
      * 'proceed' more recent messages (see note above).
      */
-    header->oldest = header->oldest + 1 % BUFFER_MSG_CAPACITY;
+    header->oldest = (header->oldest + 1) % BUFFER_MSG_CAPACITY;
     // We consumed a message, so decrease the count of messages in the buffer.
     header->msg_count--;
 
