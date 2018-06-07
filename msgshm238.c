@@ -386,6 +386,11 @@ msg* fetch_msg(shm_dict_entry* shm_ptr, int senderId) {
     if (local_msg == NULL) {
         /* Ugh, out of memory */
         printf("[ERROR] could not malloc memory for local_msg when copying from shared_msg read from shared memory\n");
+        // Release lock and return.
+        expected = invoker_pid;
+        while(!atomic_compare_exchange_weak(&(header->pIdOfCurrent), &expected, SHM_SEGMENT_UNLOCKED)) {
+            expected = invoker_pid;
+        }
         return NULL;
     }
     local_msg->senderId = shared_msg->senderId; // Need to copy?
