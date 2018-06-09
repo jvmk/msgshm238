@@ -53,7 +53,6 @@ pid_t get_invoker_pid() {
     if (invoker_pid < 0) {
         // Assumption: all pids are non negative.
         invoker_pid = getpid();
-        printf("updated cached pid to=%d\n", invoker_pid);
     }
     return invoker_pid;
 }
@@ -208,7 +207,6 @@ int put_msg(shm_dict_entry * shm_ptr, int rcvrId, char * payload) {
     // ------------------------------------------------------------------------------------
     // We're done modifying the shm segment => release lock.
     unlock_shm(shm_ptr);
-    printf("successfully added message with payload '%s' to buffer\n", payload);
     // 0 for success.
     return 0;
 }
@@ -294,7 +292,6 @@ int create_shared_mem_segment(int pid1, int pid2) {
 void send(char * payload, int receiverId) {
     // Refresh cached pid if needed.
     invoker_pid = get_invoker_pid();
-    printf("send(char *, int) invoked by caller with pid=%d; rcvrId=%d; payload='%s'\n", invoker_pid, receiverId, payload);
     // Locate the shared memory segment if one already exists by querying the hash table.
     shm_dict_entry *entry = find_shm_dict_entry_for_shm_segment(invoker_pid, receiverId);
     if(entry == NULL) {
