@@ -117,36 +117,55 @@ shm_dict_entry* find_shm_dict_entry_for_shm_segment(int pid1, int pid2) {
     return entry;
 }
 
-
-/****** a memcpy of the data (in our case header+ msg array) to the address of shared memory
-which was received from mmap call is needed here. Otherwise you are just putting data
-to the local copy of the dictionary and header. I don't see any memcpy in this function.
-Maybe you implemented differently?
-See this example: https://gist.github.com/garcia556/8231e844a90457c99cc72e5add8388e4
-**************************************************/
-int put_msg(shm_dict_entry * shm_ptr, int rcvrId, char * payload) {
-    int expected;
+/**
+ * Obtain the lock for the shared memory segment pointed to/identified by shm_metadata.
+ * A CAS-based spin-lock is used for synchronization.
+ */
+void lock_shm(shm_dict_entry* shm_metadata) {
+    // shm_header->pIdOfCurrent is set to SHM_SEGMENT_UNLOCKED if the lock is available.
+    int expected = SHM_SEGMENT_UNLOCKED;
     // Read the header which resides at the front of the shared memory segment.
-    shm_header * header = (shm_header *)shm_ptr->addr;
-    // Refresh cache with sender's pid if necessary.
+    shm_header* header = (shm_header *)shm_metadata->addr;
+    // Refresh cache with invokers pid if necessary.
     get_invoker_pid();
-    // Spin lock -- wait for exclusive access.
-    expected = SHM_SEGMENT_UNLOCKED;
     while(!atomic_compare_exchange_weak(&(header->pIdOfCurrent), &expected, invoker_pid)) {
-        // Unfortunately have to make it this verbose since expected is overwritten if the result is false.
-        // See last answer here.
-        // https://stackoverflow.com/questions/16043723/why-do-c11-cas-operations-take-two-pointer-parameters
+        // Unfortunately have to make it this verbose since expected is overwritten if the result is false (cant just do "while(!atomic_...);").
+        // See last answer here: https://stackoverflow.com/questions/16043723/why-do-c11-cas-operations-take-two-pointer-parameters
         expected = SHM_SEGMENT_UNLOCKED;
     }
+}
 
+/**
+ * Release the lock for the shared memory segment pointed to/identified by shm_metadata.
+ * A CAS-based spin-lock is used for synchronization.
+ */
+void unlock_shm(shm_dict_entry* shm_metadata) {
+    // If invoker holds the lock, shm_header->pIdOfCurrent should have been set to pid of invoker
+    int expected = invoker_pid;
+    // Read the header which resides at the front of the shared memory segment.
+    shm_header* header = (shm_header *)shm_metadata->addr;
+    // Note that loop is necessary even though we already hold the lock as the _weak version is allowed to fail spuriously (see doc).
+    // TODO: hmm, could this cause synchronization issues? rather use the _strong version?
+    while(!atomic_compare_exchange_weak(&(header->pIdOfCurrent), &expected, SHM_SEGMENT_UNLOCKED)) {
+        expected = invoker_pid;
+    }
+}
+
+/**
+ * Places a new message in the shared memory segment.
+ * A negative error code in case of failure (e.g., shm is full).
+ */
+int put_msg(shm_dict_entry * shm_ptr, int rcvrId, char * payload) {
+    // Read the header which resides at the front of the shared memory segment.
+    shm_header * header = (shm_header *)shm_ptr->addr;
+    // Spin lock -- wait for exclusive access.
+    lock_shm(shm_ptr);
+    // Obtained exclusive, now check if there is room for any more messages.
     if (header->msg_count == BUFFER_MSG_CAPACITY) {
         // Buffer is full.
         printf("buffer is full, cannot add msg\n");
         // Release lock and return error code.
-        expected = invoker_pid;
-        while(atomic_compare_exchange_weak(&(header->pIdOfCurrent), &expected, SHM_SEGMENT_UNLOCKED)) {
-            expected = invoker_pid;
-        }
+        unlock_shm(shm_ptr);
         return -1;
     }
     /*
@@ -156,7 +175,10 @@ int put_msg(shm_dict_entry * shm_ptr, int rcvrId, char * payload) {
      * However, note that we wrap around if we reached end of buffer but have space available at
      * the front because one of the earlier elements have been read.
      *
-     * TODO: need +1 byte? Or is this taken care of by 0-indexed approach?
+     * TODO: I think this is where the bug is.
+     * Should be:
+     * offset = sizeof(shm_header) + sizeof(msg) * (header->newest + 1 % BUFFER_MSG_CAPACITY);
+     * Such that we always add after the newest message (it might reside early in the buffer if we wrapped around).
      */
     size_t msg_offset = sizeof(shm_header) + sizeof(msg) * (header->msg_count % BUFFER_MSG_CAPACITY);
     msg * new_msg = (msg*) shm_ptr->addr + msg_offset;
@@ -190,13 +212,8 @@ int put_msg(shm_dict_entry * shm_ptr, int rcvrId, char * payload) {
         header->oldest = header->newest;
     }
     // ------------------------------------------------------------------------------------
-
-    // Unlock.
-    // Note that loop is necessary even though we already hold the lock as the _weak version is allowed to fail spuriously (see doc).
-    expected = invoker_pid;
-    while(!atomic_compare_exchange_weak(&(header->pIdOfCurrent), &expected, SHM_SEGMENT_UNLOCKED)) {
-        expected = invoker_pid;
-    }
+    // We're done modifying the shm segment => release lock.
+    unlock_shm(shm_ptr);
     printf("successfully added message with payload '%s' to buffer\n", payload);
     // 0 for success.
     return 0;
@@ -351,32 +368,23 @@ void send(char * payload, int receiverId) {
 }
 
 msg* fetch_msg(shm_dict_entry* shm_ptr, int senderId) {
-    int expected;
     // Read the header which resides at the front of the shared memory segment.
     shm_header * header = (shm_header *)shm_ptr->addr;
     // Spin lock -- wait for exclusive access.
-    expected = SHM_SEGMENT_UNLOCKED;
-    while(!atomic_compare_exchange_weak(&(header->pIdOfCurrent), &expected, invoker_pid)) {
-        expected = SHM_SEGMENT_UNLOCKED;
-    }
+    lock_shm(shm_ptr);
     // Exclusive access to shm segment obained.
-
     if (header->msg_count == 0) {
         // There are no messages to be read => release lock and return NULL.
-        expected = invoker_pid;
-        while(!atomic_compare_exchange_weak(&(header->pIdOfCurrent), &expected, SHM_SEGMENT_UNLOCKED)) {
-            expected = invoker_pid;
-        }
+        unlock_shm(shm_ptr);
         return NULL;
     }
-
-
     /*
      * Calcuate the offset of the oldest message in the buffer.
      *
-     * TODO: the oldest message might be one sent by invoker_pid itself, so may
-     * need to advance value pointed to by oldest by +1 until we get to a message
-     * where msg->senderId != invoker_pid.
+     * TODO: for now, we only support producer/consumer relationship between two processes.
+     * Should we later wish to support a duplex channel, there is an issue that the oldest
+     * message might be one sent by invoker_pid itself, so may need to advance value pointed
+     * to by oldest by +1 until we get to a message where msg->senderId != invoker_pid.
      */
     size_t msg_offset = sizeof(shm_header) + sizeof(msg) * (header->oldest);
     msg* shared_msg = (msg*) shm_ptr->addr + msg_offset;
@@ -387,34 +395,25 @@ msg* fetch_msg(shm_dict_entry* shm_ptr, int senderId) {
         /* Ugh, out of memory */
         printf("[ERROR] could not malloc memory for local_msg when copying from shared_msg read from shared memory\n");
         // Release lock and return.
-        expected = invoker_pid;
-        while(!atomic_compare_exchange_weak(&(header->pIdOfCurrent), &expected, SHM_SEGMENT_UNLOCKED)) {
-            expected = invoker_pid;
-        }
+        unlock_shm(shm_ptr);
         return NULL;
     }
-    local_msg->senderId = shared_msg->senderId; // Need to copy?
-    local_msg->rcvrId = shared_msg->rcvrId; // Need to copy?
+    local_msg->senderId = shared_msg->senderId; // Need to copy ints?
+    local_msg->rcvrId = shared_msg->rcvrId; // Need to copy ints?
     // Copy the payload to the local msg.
     strncpy(local_msg->payload, shared_msg->payload, MAX_PAYLOAD_SIZE);
-
     /*
      * Set flag that indicates that shared_msg was read and is no longer needed.
      *
-     * TODO for now we can just increment shm_header->oldest, but this WON'T WORK
+     * TODO: for now we can just increment shm_header->oldest, but this WON'T WORK
      * if shm_header->oldest is a message sent by invoker_pid and we therefore
-     * 'proceed' more recent messages (see note above).
+     * 'proceeded' to more recent messages (see note above).
      */
     header->oldest = (header->oldest + 1) % BUFFER_MSG_CAPACITY;
     // We consumed a message, so decrease the count of messages in the buffer.
     header->msg_count--;
-
-
     // Unlock exclusive access to shared memory segment.
-    expected = invoker_pid;
-    while(!atomic_compare_exchange_weak(&(header->pIdOfCurrent), &expected, SHM_SEGMENT_UNLOCKED)) {
-        expected = invoker_pid;
-    }
+    unlock_shm(shm_ptr);
     return local_msg;
 }
 

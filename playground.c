@@ -60,6 +60,7 @@ int main(void) {
             msg* msg1 = recv(sender_id);
             if (msg1 != NULL) {
                 printf("read message: { senderId=%d; rcvrId=%d; payload='%s'; }\n", msg1->senderId, msg1->rcvrId, msg1->payload);
+                free(msg1);
             }
         }
     }
