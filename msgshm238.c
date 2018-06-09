@@ -11,6 +11,7 @@
 #include <stdatomic.h>
 #include <sys/ipc.h>
 #include <errno.h>
+#include <stdbool.h>
 
 /**
  * Max number of chars needed to convert an int to a string.
@@ -226,6 +227,8 @@ void init_shm_header(shm_dict_entry * shm_ptr) {
 }
 
 int create_shared_mem_segment(int pid1, int pid2) {
+    // Boolean flag indicating if the segment was created or if we attached to an existing one.
+    bool created = true;
     // Init shm_dict_entry for new shm segment.
     shm_dict_entry* entry = malloc(sizeof(shm_dict_entry));
     if (entry == NULL) {
@@ -238,10 +241,8 @@ int create_shared_mem_segment(int pid1, int pid2) {
     char * identifier = get_shm_id_for_processes(pid1, pid2);
     // intended size of the shared memory segment
     size_t shm_segment_size = sizeof(shm_header) + sizeof(msg) * BUFFER_MSG_CAPACITY;
-    printf("Creating new shared memory segment with id=%s...\n", identifier);
     // Create and open new shared memory segment.
     fd = shm_open(identifier, O_CREAT | O_EXCL | O_RDWR, S_IRUSR | S_IWUSR);
-    printf("fd value : %d\n",fd);
     if (fd == -1) {
         // Error creating shm segment, check what kind of error occurred using errno set by the call.
         if (errno != EEXIST) {
@@ -250,9 +251,8 @@ int create_shared_mem_segment(int pid1, int pid2) {
             free(identifier);
             return -3;
         } else {
-            // Pointer to start of shared memory region.
-            void* addr;
-            // errno == EEXIST i.e. shm segment already exists.
+            // errno == EEXIST i.e. shm segment already exists, attach to it.
+            created = false;
             fd = shm_open(identifier, O_RDWR , 0);
             if (fd == -1) {
                 // Bad luck, failed attaching to existing shm segment.
@@ -261,44 +261,34 @@ int create_shared_mem_segment(int pid1, int pid2) {
                 free(identifier);
                 return -1;
             }
-            // No need for ftruncate call here. Other process has already sized the shm segment.
-            // Map shm segment into own memory space.
-            addr = mmap(NULL, shm_segment_size , PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-            // fd is no longer needed - we can unlink the shared memory segment using the identifer.
-            close(fd);
-            // Set fields in new entry and update map with new entry.
-            entry->id = identifier;
-            entry->addr = addr;
-            // The second parameter ('id') is the name of the shm_dict_entry field that should be used as key.
-            HASH_ADD_STR(shm_dict, id, entry);
-            // Note: should NOT init shm_header here as the other process has already done so.
-            // Return 0 to indicate success.
-            return 0;
         }
-    } else {
-        // Pointer to starting location of new shared memory segment.
-        void *addr;
-        printf("Successfully created new shared memory segment with fd=%d\n", fd);
+    }
+    // Pointer to starting location of new shared memory segment.
+    void *addr;
+    // Only size shm segment if we created a new segment (has already been done if we attached).
+    if (created) {
         /*
          * New shared memory segments have length 0, so need to size it.
          * The size chosen here will be the size of our message queue/buffer.
          * Allow room for the header and a fixed number of messages.
          */
         ftruncate(fd, shm_segment_size);
-        // Map shared memory segment into own address space.
-        addr = mmap(NULL, shm_segment_size , PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-        // fd is no longer needed - we can unlink the shared memory segment using the identifer.
-        close(fd);
-        // Set fields in new entry and update map with new entry.
-        entry->id = identifier;
-        entry->addr = addr;
-        // The second parameter ('id') is the name of the shm_dict_entry field that should be used as key.
-        HASH_ADD_STR(shm_dict, id, entry);
-        // Setup shm segment header.
-        init_shm_header(entry);
-        // Return 0 to indicate success.
-        return 0;
     }
+    // Map shared memory segment into own address space.
+    addr = mmap(NULL, shm_segment_size , PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    // fd is no longer needed - we can unlink the shared memory segment using the identifer.
+    close(fd);
+    // Set fields in new entry and update map with new entry.
+    entry->id = identifier;
+    entry->addr = addr;
+    // The second parameter ('id') is the name of the shm_dict_entry field that should be used as key.
+    HASH_ADD_STR(shm_dict, id, entry);
+    // Only setup shm segment header if we created a new segment (has already been done if we attached).
+    if (created) {
+        init_shm_header(entry);
+    }
+    // Return 0 to indicate success.
+    return 0;
 }
 
 void send(char * payload, int receiverId) {
