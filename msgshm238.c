@@ -226,6 +226,12 @@ void init_shm_header(shm_dict_entry * shm_ptr) {
 }
 
 int create_shared_mem_segment(int pid1, int pid2) {
+    // Init shm_dict_entry for new shm segment.
+    shm_dict_entry* entry = malloc(sizeof(shm_dict_entry));
+    if (entry == NULL) {
+        // Out of memory. Return error code to let caller know.
+        return -2;
+    }
     // File descriptor for the shared memory segment.
     int fd;
     // Construct identifier for new shared mem segment.
@@ -239,18 +245,18 @@ int create_shared_mem_segment(int pid1, int pid2) {
     if (fd == -1) {
         // Error creating shm segment, check what kind of error occurred using errno set by the call.
         if (errno != EEXIST) {
-            // Some other (arbitrary) error.
+            // Some other (arbitrary) error. Free allocated metadata entry before returning error code.
+            free(entry);
             return -3;
         } else {
             // Pointer to start of shared memory region.
             void* addr;
-            // Init shm_dict_entry for shm segment that we attached to.
-            shm_dict_entry* entry = malloc(sizeof(shm_dict_entry));
             // errno == EEXIST i.e. shm segment already exists.
             fd = shm_open(identifier, O_RDWR , 0);
             if (fd == -1) {
                 // Bad luck, failed attaching to existing shm segment.
-                // Report error to caller.
+                // Free metadata entry and report error to caller.
+                free(entry);
                 return -1;
             }
             // No need for ftruncate call here. Other process has already sized the shm segment.
@@ -271,13 +277,6 @@ int create_shared_mem_segment(int pid1, int pid2) {
         // Pointer to starting location of new shared memory segment.
         void *addr;
         printf("Successfully created new shared memory segment with fd=%d\n", fd);
-        // Init shm_dict_entry for created shm segment.
-        shm_dict_entry* entry = malloc(sizeof(shm_dict_entry));
-        if (entry == NULL) {
-            // Out of memory. Return error code to let caller know.
-            // TODO should close the shared memory segment here...
-            return -2;
-        }
         /*
          * New shared memory segments have length 0, so need to size it.
          * The size chosen here will be the size of our message queue/buffer.
@@ -299,7 +298,6 @@ int create_shared_mem_segment(int pid1, int pid2) {
         return 0;
     }
 }
-
 
 void send(char * payload, int receiverId) {
     // Refresh cached pid if needed.
