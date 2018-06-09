@@ -1,91 +1,48 @@
-#include <semaphore.h>
 #include <stdatomic.h>
-
-sem_t mutex;
-
 // TODO update to proper size, for now keep low so that we can experiment with breaking long payloads into multiple messages
 #define MAX_PAYLOAD_SIZE 32
 
-// Begin new copy- and fixed size-based approach
-
 typedef struct msgTag {
-
-    // message header that includes msg ID, sender, and receiver information
-    int msgHeader;
-    //sender's (process) ID
+    /**
+     * Sender's (process) ID
+     */
     int senderId;
-    // (Proccess) ID of receiver. TODO: is it more efficient to use pointer to avoid copying (pass-by-value)?
+    /**
+     * (Proccess) ID of receiver.
+     */
     int rcvrId;
-    // ... TODO pointer to location (or copy) of data to be shared.
-    // use of pointer may be more efficient as only one copy will be necessary (from private memory to shared memory segment)
-    // in contrast, pass-by-value will require a copy from local memory to local variable and then to shared memory segment.
-
-    //message itself....not sure about data type...for now using string
+    /**
+     * The message's payload. Fixed size. Longer payloads will have to be split into multiple messages.
+     */
     char payload[MAX_PAYLOAD_SIZE];
-    // next
 } msg;
-
 
 /**
  * Send message with contents pointed to by 'payload' to process with pid 'receiverId'.
  */
-
 void send(char * payload, int receiverId);
 
 /**
  * Read (receive) a message sent by process with pid 'senderId'.
  */
-
 msg *recv(int senderId);
 
 // Header used for structuring data in shm segment.
 typedef struct SharedMemorySegmentHeader {
+    /**
+     * Number of messages in the shm segment that this header resides in.
+     */
     unsigned int msg_count;
-
+    /**
+     * pid of process that currently has exclusive access to the shm segment that this header resides in.
+     */
     _Atomic pid_t pIdOfCurrent;
-
-    //    mem_block *head;
-    //    mem_block *tail;
-
-    // Index of most recently added message.
+    /**
+     * Index of most recently added message.
+     */
     int newest;
-    // Index of least recently added message.
+    /**
+     * Index of least recently added message.
+     */
     int oldest;
 } shm_header;
-
-typedef struct Memory
-{
-    msg * message;
-    struct mem_block *next;
-}mem_block;
-
-
-// End new copy- and fixed size-based approach
-// ---------------------------------------------------------------
-
-
-
-// ---------------------------------------------------------------
-// Begin notes
-
-//----------------------------------------------------------------------------------
-// Brainstorm -> idea for how to implement blocking recv:
-// Sender (on start up or at first send) locks some memory location identified by its process ID;
-// does not release lock until after it has stored some message in shared memory;
-// then releases lock as a way of notifying receiver that data is ready.
-// ...
-// ... needs more thought
-//----------------------------------------------------------------------------------
-
-
-
-// data structure in shared memory segment
-// [ {messagesNum, head, tail, pIdOfCurrentAccessor} msg, msg, msg, msg, msg  ...  ]
-
-
-//    shm_ptr->addr->tail->next = memory
-//    shm_ptr->addr->tail = shm_ptr->addr->tail->next
-//    [ shm_header {mem_block_head} {men_block_tail}    ]
-
-// End notes
-// ---------------------------------------------------------------

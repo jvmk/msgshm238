@@ -10,8 +10,6 @@
 #include "uthash.h" /* Hash table provided by https://troydhanson.github.io/uthash/ */
 #include <stdatomic.h>
 #include <sys/ipc.h>
-#include  <sys/ipc.h>
-#include  <sys/shm.h>
 #include <errno.h>
 
 /**
@@ -44,6 +42,11 @@ pid_t invoker_pid = -42;
  */
 const pid_t SHM_SEGMENT_UNLOCKED = -1;
 
+/**
+ * Get the pid of the invoker (the executing process). To avoid a system call for each invocation,
+ * the value of getpid() is cached the first time this function is invoked, and subsequent invocations
+ * simply return the cached value.
+ */
 pid_t get_invoker_pid() {
     // Perform syscall to get sender id if not already cached.
     if (invoker_pid < 0) {
@@ -59,11 +62,8 @@ pid_t get_invoker_pid() {
  */
 typedef struct shm_dictionary_entry {
     /**
-     * For now, the ID is the concatenation of sender and the receiver ID, hence we must allow room for two ints.
-     * In addition, we must prepend the concatenation of the two IDs with a slash as per the convention specified in the man pages (hence we need the +1 to allow space for an extra char).
-     * See http://man7.org/linux/man-pages/man3/shm_open.3.html
+     * ID of the shm segment pointed to by this metadata entry.
      */
-//    char id[2*INT_AS_STR_MAX_CHARS+1];
     char *id;
     /**
      * Pointer to start of shared memory segment.
@@ -242,12 +242,6 @@ int create_shared_mem_segment(int pid1, int pid2) {
     printf("Creating new shared memory segment with id=%s...\n", identifier);
     // Create and open new shared memory segment.
     fd = shm_open(identifier, O_CREAT | O_EXCL | O_RDWR, S_IRUSR | S_IWUSR);
-    /*
-     * TODO CHECK HERE IF ERROR CODE MEANS SEGMENT ALREADY EXISTED.
-     * IF THIS IS THE CASE, IT MEANS THAT THE OTHER PROCESS CREATED
-     * SHARED MEMORY SEGMENT BEFORE US, AND WE SHOULD SIMPLY ATTACH
-     * TO IT.
-     */
     printf("fd value : %d\n",fd);
     if (fd == -1) {
         // Error creating shm segment, check what kind of error occurred using errno set by the call.
@@ -260,14 +254,13 @@ int create_shared_mem_segment(int pid1, int pid2) {
             // Init shm_dict_entry for shm segment that we attached to.
             shm_dict_entry* entry = malloc(sizeof(shm_dict_entry));
             // errno == EEXIST i.e. shm segment already exists.
-            printf("mem exist, attaching to it\n");
             fd = shm_open(identifier, O_RDWR , 0);
             if (fd == -1) {
                 // Bad luck, failed attaching to existing shm segment.
                 // Report error to caller.
                 return -1;
             }
-            // TODO need for ftruncate call here? Other process has already sized the shm segment...
+            // No need for ftruncate call here. Other process has already sized the shm segment.
             // Map shm segment into own memory space.
             addr = mmap(NULL, shm_segment_size , PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
             // fd is no longer needed - we can unlink the shared memory segment using the identifer.
@@ -281,34 +274,6 @@ int create_shared_mem_segment(int pid1, int pid2) {
             // Return 0 to indicate success.
             return 0;
         }
-        
-        /* previous code
-        //int id = shmget(get_shm_id_for_processes(pid1, pid2), sizeof(shm_header) + sizeof(msg) * BUFFER_MSG_CAPACITY, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH | IPC_CREAT);
-        fd = shm_open(identifier, O_RDONLY, S_IRUSR | S_IWUSR);
-        printf("fd value now : %d\n",fd);
-        if(fd != -1){
-            printf("success!! we got the id for already created shared mem : %d\n",fd);
-            void *addr;
-            // map to the address space
-            addr = mmap(NULL, sizeof(shm_header) + sizeof(msg) * BUFFER_MSG_CAPACITY, PROT_READ, MAP_SHARED, fd, 0);
-            if (addr == MAP_FAILED)
-            {
-                printf("MAPPING FAILED");
-                return -1;
-            }
-            else{
-                printf("MAPPING SUCCESSFUL\n");
-                void *data;
-                memcpy(data, addr, sizeof(shm_header) + sizeof(msg) * BUFFER_MSG_CAPACITY);
-                printf("PID %d: Read from shared memory: \"%s\"\n", pid2, data);
-                return -1;
-            }
-            //shm_header  *header = (shm_header *)shmat(fd, NULL, 0);
-            //printf("read msg_count :%d\n",header->msg_count);
-            // msg * m = fetch_msg(header, senderId);
-       }
-        return -1;
-        */
     } else {
         // Pointer to starting location of new shared memory segment.
         void *addr;
@@ -420,24 +385,16 @@ msg* fetch_msg(shm_dict_entry* shm_ptr, int senderId) {
 msg* recv(int senderId) {
     // Refresh cached pid if needed.
     get_invoker_pid();
-//    printf("recv(int senderId) invoked by caller with pid=%d; senderId=%d\n", invoker_pid, senderId);
     // Locate the shared memory segment if one already exists by querying the hash table.
-    //shm_dict_entry *entry = find_shm_dict_entry_for_shm_segment(invoker_pid, senderId);
-
     shm_dict_entry *entry = find_shm_dict_entry_for_shm_segment(senderId, get_invoker_pid());
-
     if (entry == NULL) {
         // No **knowledge of** existing shared memory segment, so set one up.
         // Note that a shared mem segment may in fact exist, we just haven't interacted with it yet.
         // It is up to create_shared_mem_segment to attach to it (instead of creating it) if it already exists.
-
-//        int created = create_shared_mem_segment(invoker_pid, senderId);
         int created = create_shared_mem_segment(senderId, get_invoker_pid());
-
         if (0 != created) {
             // TODO error handling
             printf("[ERROR] create_shared_mem_segment(int,int) returned error code %d. Memory segment not created.\n", created);
-
             return NULL;
         }
         // As the shm segment has now been created, there should now be a corresponding entry in the map.
@@ -447,47 +404,3 @@ msg* recv(int senderId) {
     msg* m = fetch_msg(entry, senderId);
     return m;
 }
-
-/* maruf recv
-msg *recv(int senderId){
-
-    char *identifier = malloc(2*INT_AS_STR_MAX_CHARS+1);
-    // Get own pid from cache or update cache if pid not previously read.
-    int receiverId = get_invoker_pid();
-
-    sprintf(identifier, "/%d%d", senderId, receiverId);
-
-    shm_dict_entry *entry = malloc(sizeof(*entry));
-    HASH_FIND_STR(shm_dict, identifier, entry);
-
-    // If a shared memory segment already exists with this key, return it; otherwise create a new one for this key and return that.
-     int ShmID = shmget(identifier, sizeof(shm_header) + sizeof(msg) * BUFFER_MSG_CAPACITY, IPC_CREAT);
-     if (ShmID >0) {
-          printf("shared memory exist and found \n");
-          char *data;
-
-          data = shmat(ShmID, (void *)0, 0);
-          if (data == NULL)
-                perror("shmat");
-          else
-              printf("%s",data);
-
-     }
-     else{
-          printf("shared memory does not exist\n");
-          //MAYBE WE ALLOCATE NEW MEMORY BLOCK?
-
-     }
-
-//    if(entry == NULL) {
-//        // shared memory does not exist
-//        printf("the shared memory does not exist");
-//        return NULL;
-//    }
-//    else{
-//        // read from the shared memory
-//        printf("shared memory found");
-//    }
-
-}
-*/
