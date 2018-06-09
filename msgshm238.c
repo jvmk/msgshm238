@@ -170,17 +170,10 @@ int put_msg(shm_dict_entry * shm_ptr, int rcvrId, char * payload) {
     }
     /*
      * Offset of the new message in shared memory segment is the byte immediately after the most
-     * recently added message, i.e., its starting position is the header size plus the size of a
-     * message times the number of messages currently in the segment.
-     * However, note that we wrap around if we reached end of buffer but have space available at
-     * the front because one of the earlier elements have been read.
-     *
-     * TODO: I think this is where the bug is.
-     * Should be:
-     * offset = sizeof(shm_header) + sizeof(msg) * (header->newest + 1 % BUFFER_MSG_CAPACITY);
-     * Such that we always add after the newest message (it might reside early in the buffer if we wrapped around).
+     * recently added message. Note that we must wrap around if we reached end of buffer but have
+     * space available at the front because one of the earlier elements have been read.
      */
-    size_t msg_offset = sizeof(shm_header) + sizeof(msg) * (header->msg_count % BUFFER_MSG_CAPACITY);
+    size_t msg_offset = sizeof(shm_header) + sizeof(msg) * ((header->newest + 1) % BUFFER_MSG_CAPACITY);
     msg * new_msg = (msg*) shm_ptr->addr + msg_offset;
     new_msg->senderId = invoker_pid;
     new_msg->rcvrId = rcvrId;
