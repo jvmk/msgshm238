@@ -245,8 +245,9 @@ int create_shared_mem_segment(int pid1, int pid2) {
     if (fd == -1) {
         // Error creating shm segment, check what kind of error occurred using errno set by the call.
         if (errno != EEXIST) {
-            // Some other (arbitrary) error. Free allocated metadata entry before returning error code.
+            // Some other (arbitrary) error. Free allocated metadata entry and identifier before returning error code.
             free(entry);
+            free(identifier);
             return -3;
         } else {
             // Pointer to start of shared memory region.
@@ -255,8 +256,9 @@ int create_shared_mem_segment(int pid1, int pid2) {
             fd = shm_open(identifier, O_RDWR , 0);
             if (fd == -1) {
                 // Bad luck, failed attaching to existing shm segment.
-                // Free metadata entry and report error to caller.
+                // Free metadata entry and identifier and report error to caller.
                 free(entry);
+                free(identifier);
                 return -1;
             }
             // No need for ftruncate call here. Other process has already sized the shm segment.
