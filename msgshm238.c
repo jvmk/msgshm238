@@ -384,3 +384,19 @@ msg* recv(int senderId) {
     msg* m = fetch_msg(entry, senderId);
     return m;
 }
+
+int close_mem(int pid1, int pid2){
+     char *key = get_shm_id_for_processes(pid1, pid2);
+     shm_header * header = (shm_header *)shm_dict->addr;
+     // Spin lock -- wait for exclusive access.
+
+     if (header->msg_count == 0) {
+        // Buffer is full.
+        int val = shm_unlink(key);
+
+        if(val != -1) return 0;
+        return -1;
+    }
+    else
+        return -1;
+}

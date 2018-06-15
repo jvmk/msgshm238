@@ -27,10 +27,16 @@ void send(char * payload, int receiverId);
  */
 msg *recv(int senderId);
 
+/****
+* Close - return int
+**/
+
+int close_mem(int pid1,int pid2);
+
 // Header used for structuring data in shm segment.
 typedef struct SharedMemorySegmentHeader {
     /**
-     * Number of messages in the shm segment that this header resides in.
+     * Number of m toessages in the shm segment that this header resides in.
      */
     unsigned int msg_count;
     /**

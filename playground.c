@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include "msgshm238.h"
+#include <string.h>
 
 void strings() {
     char str[] = "no notion of 'wrapper' String class/struct like in java;\nstrings are declared as char arrays.\n";
@@ -33,15 +34,17 @@ int main(void) {
 
 //    char * str1 = "string1";
 //    char * str2 = "string2";
-    
+
 //    char * str = malloc(sizeof(*str));
-    
+
     printf("PID: %d Running\n",getpid());
     printf("enter s to send and r to receive : ");
     char ch;
     scanf("%c",&ch);
     char str[1024];
-    
+    int val;
+    char cls;
+
     if(ch == 's'){
         int receiver_id;
         printf("enter receiver id: ");
@@ -49,7 +52,22 @@ int main(void) {
         while(1) {
             printf("enter string to send:");
             scanf("%s",str);
+
+            if(strcmp(str,"close") == 0)
+            {
+                val = close_mem(getpid(), receiver_id);
+                printf("%d\n",val);
+                if(val == 0){
+                    printf("shared memory closed\n");
+                    break;
+                }
+                else {
+                  printf("shared memory has unread element, Can't close\n");
+                }
+            }
             send(str, receiver_id);
+
+
         }
     }
     else if(ch == 'r'){
@@ -62,6 +80,7 @@ int main(void) {
                 printf("read message: { senderId=%d; rcvrId=%d; payload='%s'; }\n", msg1->senderId, msg1->rcvrId, msg1->payload);
                 free(msg1);
             }
+
         }
     }
 
