@@ -30,25 +30,4 @@ msg *recv(int senderId);
 /****
 * Close - return int
 **/
-
 int close_mem(int pid_other_proc);
-
-// Header used for structuring data in shm segment.
-typedef struct SharedMemorySegmentHeader {
-    /**
-     * Number of m toessages in the shm segment that this header resides in.
-     */
-    unsigned int msg_count;
-    /**
-     * pid of process that currently has exclusive access to the shm segment that this header resides in.
-     */
-    _Atomic pid_t pIdOfCurrent;
-    /**
-     * Index of most recently added message.
-     */
-    int newest;
-    /**
-     * Index of least recently added message.
-     */
-    int oldest;
-} shm_header;

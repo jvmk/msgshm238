@@ -58,6 +58,28 @@ pid_t get_invoker_pid() {
 }
 
 /**
+ * Header used for structuring data in shm segment.
+ */
+typedef struct SharedMemorySegmentHeader {
+    /**
+     * Number of m toessages in the shm segment that this header resides in.
+     */
+    unsigned int msg_count;
+    /**
+     * pid of process that currently has exclusive access to the shm segment that this header resides in.
+     */
+    _Atomic pid_t pIdOfCurrent;
+    /**
+     * Index of most recently added message.
+     */
+    int newest;
+    /**
+     * Index of least recently added message.
+     */
+    int oldest;
+} shm_header;
+
+/**
  * Type used for constructing a dictionary (hash map), which is in turn used to locate existing shared memory segments.
  */
 typedef struct shm_dictionary_entry {
