@@ -385,18 +385,33 @@ msg* recv(int senderId) {
     return m;
 }
 
-int close_mem(int pid1, int pid2){
-     char *key = get_shm_id_for_processes(pid1, pid2);
-     shm_header * header = (shm_header *)shm_dict->addr;
-     // Spin lock -- wait for exclusive access.
-
-     if (header->msg_count == 0) {
-        // Buffer is full.
-        int val = shm_unlink(key);
-
-        if(val != -1) return 0;
+int close_mem(int pid_other_proc) {
+    char *key = get_shm_id_for_processes(get_invoker_pid(), pid_other_proc);
+    // Dictionary entry for the shm segment.
+    shm_dict_entry *entry = NULL;
+    // Lookup dict entry.
+    HASH_FIND_STR(shm_dict, key, entry);
+    if (NULL == entry) {
         return -1;
     }
-    else
+    // Spin lock -- wait for exclusive access.
+    lock_shm(entry);
+    shm_header* header = (shm_header*)entry->addr;
+    if (header->msg_count == 0) {
+        // Buffer is full.
+        int val = shm_unlink(key);
+        // Release lock.
+        unlock_shm(entry);
+        if(val != -1) {
+            // Remove from hash table if successfully unlinked.
+            HASH_DEL(shm_dict, entry);
+            free(entry);
+            return 0;
+        }
         return -1;
+    } else {
+        // Release lock
+        unlock_shm(entry);
+        return -1;
+    }
 }

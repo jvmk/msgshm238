@@ -31,7 +31,7 @@ msg *recv(int senderId);
 * Close - return int
 **/
 
-int close_mem(int pid1,int pid2);
+int close_mem(int pid_other_proc);
 
 // Header used for structuring data in shm segment.
 typedef struct SharedMemorySegmentHeader {

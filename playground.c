@@ -55,7 +55,7 @@ int main(void) {
 
             if(strcmp(str,"close") == 0)
             {
-                val = close_mem(getpid(), receiver_id);
+                val = close_mem(receiver_id);
                 printf("%d\n",val);
                 if(val == 0){
                     printf("shared memory closed\n");
